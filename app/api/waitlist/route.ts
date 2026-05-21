@@ -1,6 +1,5 @@
-import { appendFile, mkdir } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
@@ -17,6 +16,22 @@ const userTypes = new Set([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function getSupabaseClient() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
 
 export async function POST(request: Request) {
@@ -53,17 +68,28 @@ export async function POST(request: Request) {
     );
   }
 
-  const dataDir = path.join(process.cwd(), "data");
-  const waitlistFile = path.join(dataDir, "waitlist.jsonl");
-  const record = {
-    email,
-    userType,
-    createdAt: new Date().toISOString(),
-    source: "waitlist",
-  };
+  const supabase = getSupabaseClient();
 
-  await mkdir(dataDir, { recursive: true });
-  await appendFile(waitlistFile, `${JSON.stringify(record)}\n`, "utf8");
+  if (!supabase) {
+    return NextResponse.json(
+      { error: "Waitlist storage is not configured." },
+      { status: 500 },
+    );
+  }
+
+  const { error } = await supabase.from("waitlist").insert({
+    email,
+    user_type: userType,
+    source: "waitlist",
+  });
+
+  if (error) {
+    console.error("Supabase waitlist insert failed:", error);
+    return NextResponse.json(
+      { error: "Could not join the waitlist. Try again soon." },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }
